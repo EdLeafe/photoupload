@@ -1,3 +1,5 @@
+import fcntl
+from functools import partial
 import hashlib
 import logging
 import os
@@ -5,6 +7,7 @@ import six
 import sys
 import warnings
 
+import boto
 from PIL import Image
 import pyexif
 import pymysql
@@ -14,6 +17,7 @@ import requests
 import utils
 
 
+LOCKFILE = ".upload.lock"
 PHOTODIR = "/Users/ed/Desktop/photoframe"
 CLOUD_CONTAINER = "photoviewer"
 HASHFILE = "state.hash"
@@ -21,7 +25,7 @@ TESTING = False
 THUMB_URL = "https://photo.leafe.com/images/thumb"
 THUMB_SIZE = (120, 120)
 LOG = None
-LOG_LEVEL = logging.INFO
+DEFAULT_ENCONDING = "utf-8"
 
 # Albums that have already been checked against the DB
 seen_albums = {}
@@ -33,7 +37,13 @@ def _setup_logging():
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     hnd.setFormatter(formatter)
     LOG.addHandler(hnd)
-    LOG.setLevel(LOG_LEVEL)
+    if os.path.exists("LOGLEVEL"):
+        with open("LOGLEVEL", "r") as ff:
+            level = ff.read().strip()
+    else:
+        level = "INFO"
+    logdebug("LEVEL:", level)
+    LOG.setLevel(getattr(logging, level))
 
 
 def logit(level, *msgs):
@@ -43,13 +53,8 @@ def logit(level, *msgs):
     log_method = getattr(LOG, level)
     log_method(text)
 
-
-def logdebug(*msgs):
-    logit("debug", *msgs)
-
-
-def loginfo(*msgs):
-    logit("info", *msgs)
+logdebug = partial(logit, "debug")
+loginfo = partial(logit, "info")
 
 
 def directory_hash(dirname=""):
@@ -69,10 +74,14 @@ def changed(subdir=None):
     logdebug("Checking changed status of %s" % match)
     previous = None
     if os.path.exists(HASHFILE):
-        with open(HASHFILE) as ff:
-            ln = ff.readline().strip()
+        with open(HASHFILE, "rb") as ff:
+            ln = ff.readline()
+            ln = ln.strip().decode(DEFAULT_ENCONDING)
             while ln:
-                key, val = ln.split(":")
+                if isinstance(ln, bytes):
+                    key, val = ln.decode(DEFAULT_ENCONDING).split(":")
+                else:
+                    key, val = ln.split(":")
                 if key == match:
                     previous = val
                     break
@@ -97,27 +106,37 @@ def update_state():
             if fname.startswith(".") or not os.path.isdir(pth):
                 continue
             dirhash = directory_hash(os.path.join(PHOTODIR, fname))
+#            if isinstance(fname, str):
+#                fname = fname.encode(DEFAULT_ENCONDING)
             ff.write("%s:%s\n" % (fname, dirhash))
 
 
 def _user_creds():
-    with open("rax_creds.rc") as ff:
+    with open("docreds.rc") as ff:
         creds = ff.read()
     user_creds = {}
     for ln in creds.splitlines():
-        if ln.startswith("username"):
-            user_creds["username"] = ln.split("=")[-1].strip()
-        elif ln.startswith("api_key"):
-            user_creds["api_key"] = ln.split("=")[-1].strip()
+        if ln.startswith("spacekey"):
+            user_creds["spacekey"] = ln.split("=")[-1].strip()
+        elif ln.startswith("secret"):
+            user_creds["secret"] = ln.split("=")[-1].strip()
+        elif ln.startswith("bucket"):
+            user_creds["bucket"] = ln.split("=")[-1].strip()
     return user_creds
+
 
 def create_client():
     user_creds = _user_creds()
-    ctx = pyrax.create_context(username=user_creds["username"],
-            api_key=user_creds["api_key"])
-    ctx.authenticate()
-    clt = ctx.get_client("object_store", "DFW")
-    return clt
+    conn = boto.connect_s3(aws_access_key_id=user_creds["spacekey"],
+            aws_secret_access_key=user_creds["secret"],
+            host="nyc3.digitaloceanspaces.com")
+    bucket = conn.get_bucket(user_creds["bucket"])
+    return bucket
+#    ctx = pyrax.create_context(username=user_creds["username"],
+#            api_key=user_creds["api_key"])
+#    ctx.authenticate()
+#    clt = ctx.get_client("object_store", "DFW")
+#    return clt
 
 
 def sync_to_cloud(cont, fpath, fname):
@@ -189,24 +208,27 @@ def import_photos(cont, folder=None):
             upscale = ht < 4000
             newsize = (3000, 4000)
         if upscale:
+            loginfo("Upscaling {} to {}".format(photo_name, newsize))
             img_obj.resize(newsize)
         with utils.SelfDeletingTempfile() as ff:
             loginfo("Uploading:", photo_name)
             img_obj.save(ff, format=file_type)
-            uploaded = sync_to_cloud(cont, ff, photo_name)
-
-        if uploaded:
-            # Create a thumbnail to upload to the server
-            img_obj = Image.open(fpath)
-            img_obj.thumbnail(THUMB_SIZE)
-            img_obj.filename = photo_name
-            with utils.SelfDeletingTempfile() as ff:
-                img_obj.save(ff, format=file_type)
-                # Copy to the server
-                files = {"thumb_file": open(ff, "rb")}
-                data = {"filename": photo_name}
-                loginfo("Posting thumbnail for", photo_name)
-                resp = requests.post(THUMB_URL, data=data, files=files)
+            remote_path = os.path.join(CLOUD_CONTAINER, photo_name)
+            remote_file = clt.new_key(remote_path)
+            with open(ff, "rb") as file_to_upload:
+                remote_file.set_contents_from_file(file_to_upload)
+            remote_file.set_acl("public-read")
+        # Create a thumbnail to upload to the server
+        img_obj = Image.open(fpath)
+        img_obj.thumbnail(THUMB_SIZE)
+        img_obj.filename = photo_name
+        with utils.SelfDeletingTempfile() as ff:
+            img_obj.save(ff, format=file_type)
+            # Copy to the server
+            files = {"thumb_file": open(ff, "rb")}
+            data = {"filename": photo_name}
+            loginfo("Posting thumbnail for", photo_name)
+            resp = requests.post(THUMB_URL, data=data, files=files)
 
     # Finally, update the state
     update_state()
@@ -251,6 +273,8 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
                 orientation, file_type, file_size, created))
         loginfo("DB; created record for", photo_name)
     if album:
+        if isinstance(album, str):
+            album = album.encode(DEFAULT_ENCONDING)
         album_id = seen_albums.get(album)
         if not album_id:
             sql = "select pkid from album where name = %s;"
@@ -277,8 +301,23 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
     utils.commit()
 
 
+def processing():
+    try:
+        with open(LOCKFILE) as lockfile:
+            fcntl.flock(lockfile, fcntl.LOCK_EX)
+    except IOError:
+        return True
+    return False
+
+
 if __name__ == "__main__":
-    if changed():
-        clt = create_client()
-        cont = clt.get(CLOUD_CONTAINER)
-        import_photos(cont)
+    with open(LOCKFILE) as lockfile:
+        try:
+            fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except IOError:
+            # Another process is running the upload
+            loginfo("LOCKED!")
+            exit()
+        if changed():
+            clt = create_client()
+            import_photos(clt)
