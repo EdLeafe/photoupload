@@ -7,11 +7,9 @@ import six
 import sys
 import warnings
 
-import boto
 from PIL import Image
 import pyexif
 import pymysql
-import pyrax
 import requests
 
 import utils
@@ -21,6 +19,7 @@ LOCKFILE = ".upload.lock"
 PHOTODIR = "/Users/ed/Desktop/photoframe"
 CLOUD_CONTAINER = "photoviewer"
 HASHFILE = "state.hash"
+LOGFILE = "log/upload.log"
 TESTING = False
 THUMB_URL = "https://photo.leafe.com/images/thumb"
 THUMB_SIZE = (120, 120)
@@ -31,9 +30,14 @@ DEFAULT_ENCONDING = "utf-8"
 seen_albums = {}
 
 def _setup_logging():
+    if not os.path.exists(LOGFILE):
+        os.makedirs("log", exist_ok=True)
+        with open(LOGFILE, "w") as ff:
+            # This will create the file but not write anything
+            pass
     global LOG
     LOG = logging.getLogger("upload")
-    hnd = logging.FileHandler("log/upload.log")
+    hnd = logging.FileHandler(LOGFILE)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     hnd.setFormatter(formatter)
     LOG.addHandler(hnd)
@@ -111,52 +115,7 @@ def update_state():
             ff.write("%s:%s\n" % (fname, dirhash))
 
 
-def _user_creds():
-    with open("docreds.rc") as ff:
-        creds = ff.read()
-    user_creds = {}
-    for ln in creds.splitlines():
-        if ln.startswith("spacekey"):
-            user_creds["spacekey"] = ln.split("=")[-1].strip()
-        elif ln.startswith("secret"):
-            user_creds["secret"] = ln.split("=")[-1].strip()
-        elif ln.startswith("bucket"):
-            user_creds["bucket"] = ln.split("=")[-1].strip()
-    return user_creds
-
-
-def create_client():
-    user_creds = _user_creds()
-    conn = boto.connect_s3(aws_access_key_id=user_creds["spacekey"],
-            aws_secret_access_key=user_creds["secret"],
-            host="nyc3.digitaloceanspaces.com")
-    bucket = conn.get_bucket(user_creds["bucket"])
-    return bucket
-#    ctx = pyrax.create_context(username=user_creds["username"],
-#            api_key=user_creds["api_key"])
-#    ctx.authenticate()
-#    clt = ctx.get_client("object_store", "DFW")
-#    return clt
-
-
-def sync_to_cloud(cont, fpath, fname):
-    try:
-        obj = cont.get_object(fname)
-        curr_etag = pyrax.utils.get_checksum(fpath)
-        cloud_etag = obj.etag
-        logdebug("Etags: local", curr_etag, "cloud", cloud_etag)
-        if curr_etag == cloud_etag:
-            loginfo("Local file %s not changed from cloud version" % fname)
-            return False
-    except pyrax.exceptions.NoSuchObject:
-        pass
-    cont.create(file_or_path=fpath, obj_name=fname, content_type="image/jpeg",
-            return_none=True)
-    loginfo("Uploaded %s to the cloud" % fname)
-    return True
-
-
-def import_photos(cont, folder=None):
+def import_photos(clt, folder=None):
     if folder is None:
         folder = PHOTODIR
         album = None
@@ -171,7 +130,7 @@ def import_photos(cont, folder=None):
             if changed(fpath):
                 logdebug("Importing photos; directory '%s' has changed" %
                         fpath)
-                import_photos(cont, fpath)
+                import_photos(clt, fpath)
             continue
         loginfo("Importing", photo_name)
         img = pyexif.ExifEditor(fpath)
@@ -216,7 +175,7 @@ def import_photos(cont, folder=None):
             remote_path = os.path.join(CLOUD_CONTAINER, photo_name)
             remote_file = clt.new_key(remote_path)
             with open(ff, "rb") as file_to_upload:
-                remote_file.set_contents_from_file(file_to_upload)
+                remote_file.set_contents_from_file(file_to_upload, headers={"Content-Type": "image/jpg"})
             remote_file.set_acl("public-read")
         # Create a thumbnail to upload to the server
         img_obj = Image.open(fpath)
@@ -319,5 +278,5 @@ if __name__ == "__main__":
             loginfo("LOCKED!")
             exit()
         if changed():
-            clt = create_client()
+            clt = utils.create_client()
             import_photos(clt)

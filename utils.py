@@ -2,7 +2,6 @@ import binascii
 from datetime import datetime
 from functools import wraps, update_wrapper
 import logging
-from math import log
 import os
 import pudb
 from subprocess import Popen, PIPE
@@ -14,6 +13,9 @@ import pymysql
 
 
 HOST = "dodata"
+DO_CREDS_FILE = "/Users/ed/.docreds"
+DB_CREDS_FILE = "/Users/ed/.dbcreds"
+DB_NAME = "photoframe"
 main_cursor = None
 conn = None
 
@@ -56,6 +58,7 @@ def _parse_creds():
 
 def connect():
     creds = _parse_creds()
+    creds["DB_NAME"] = DB_NAME
     ret = pymysql.connect(host=HOST, user=creds["DB_USERNAME"],
             passwd=creds["DB_PWD"], db=creds["DB_NAME"], charset="utf8")
     return ret
@@ -82,7 +85,7 @@ def commit():
 
 
 def _user_creds():
-    with open("docreds.rc") as ff:
+    with open(DO_CREDS_FILE) as ff:
         creds = ff.read()
     user_creds = {}
     for ln in creds.splitlines():
