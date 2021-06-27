@@ -37,8 +37,7 @@ def runproc(cmd, decode=False):
     code you should check for an empty STDERR output to determine if your
     command completed successfully.
     """
-    proc = Popen([cmd], shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE,
-            close_fds=True)
+    proc = Popen([cmd], shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, close_fds=True)
     stdoutdata, stderrdata = proc.communicate()
     if decode:
         return (stdoutdata.decode(), stderrdata.decode())
@@ -59,8 +58,13 @@ def _parse_creds():
 def connect():
     creds = _parse_creds()
     creds["DB_NAME"] = DB_NAME
-    ret = pymysql.connect(host=HOST, user=creds["DB_USERNAME"],
-            passwd=creds["DB_PWD"], db=creds["DB_NAME"], charset="utf8")
+    ret = pymysql.connect(
+        host=HOST,
+        user=creds["DB_USERNAME"],
+        passwd=creds["DB_PWD"],
+        db=creds["DB_NAME"],
+        charset="utf8",
+    )
     return ret
 
 
@@ -100,9 +104,11 @@ def _user_creds():
 
 def create_client():
     user_creds = _user_creds()
-    conn = boto.connect_s3(aws_access_key_id=user_creds["spacekey"],
-            aws_secret_access_key=user_creds["secret"],
-            host="nyc3.digitaloceanspaces.com")
+    conn = boto.connect_s3(
+        aws_access_key_id=user_creds["spacekey"],
+        aws_secret_access_key=user_creds["secret"],
+        host="nyc3.digitaloceanspaces.com",
+    )
     bucket = conn.get_bucket(user_creds["bucket"])
     return bucket
 
@@ -124,6 +130,7 @@ class SelfDeletingTempfile(object):
     # At this point, the tempfile has been erased.
     \endcode
     """
+
     name = None
 
     def __enter__(self):

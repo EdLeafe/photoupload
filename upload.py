@@ -3,7 +3,6 @@ from functools import partial
 import hashlib
 import logging
 import os
-import six
 import sys
 import warnings
 
@@ -28,6 +27,7 @@ DEFAULT_ENCONDING = "utf-8"
 
 # Albums that have already been checked against the DB
 seen_albums = {}
+
 
 def _setup_logging():
     if not os.path.exists(LOGFILE):
@@ -56,6 +56,7 @@ def logit(level, *msgs):
     text = " ".join(["%s" % msg for msg in msgs])
     log_method = getattr(LOG, level)
     log_method(text)
+
 
 logdebug = partial(logit, "debug")
 loginfo = partial(logit, "info")
@@ -97,7 +98,7 @@ def changed(subdir=None):
     dirname = PHOTODIR if subdir is None else os.path.join(PHOTODIR, subdir)
     curr = directory_hash(dirname)
     logdebug("Current hash:", curr)
-    return (curr != previous)
+    return curr != previous
 
 
 def update_state():
@@ -110,8 +111,8 @@ def update_state():
             if fname.startswith(".") or not os.path.isdir(pth):
                 continue
             dirhash = directory_hash(os.path.join(PHOTODIR, fname))
-#            if isinstance(fname, str):
-#                fname = fname.encode(DEFAULT_ENCONDING)
+            #            if isinstance(fname, str):
+            #                fname = fname.encode(DEFAULT_ENCONDING)
             ff.write("%s:%s\n" % (fname, dirhash))
 
 
@@ -122,14 +123,12 @@ def import_photos(clt, folder=None):
     else:
         album = os.path.split(folder)[-1]
     # Update the database
-    photos = [f for f in os.listdir(folder)
-            if not f.startswith(".")]
+    photos = [f for f in os.listdir(folder) if not f.startswith(".")]
     for photo_name in photos:
         fpath = os.path.join(folder, photo_name)
         if os.path.isdir(fpath):
             if changed(fpath):
-                logdebug("Importing photos; directory '%s' has changed" %
-                        fpath)
+                logdebug("Importing photos; directory '%s' has changed" % fpath)
                 import_photos(clt, fpath)
             continue
         loginfo("Importing", photo_name)
@@ -153,8 +152,9 @@ def import_photos(clt, folder=None):
         # up the date portion.
         created = created.replace(":", "-", 2)
         # Update the DB record, if any
-        add_or_update_db(photo_name, file_type, file_size, created, ht, wd,
-                orientation, keywords, album)
+        add_or_update_db(
+            photo_name, file_type, file_size, created, ht, wd, orientation, keywords, album
+        )
         # If the image is smaller than 4000x3000, upscale it
         img_obj = Image.open(fpath)
         if orientation == "S":
@@ -175,7 +175,9 @@ def import_photos(clt, folder=None):
             remote_path = os.path.join(CLOUD_CONTAINER, photo_name)
             remote_file = clt.new_key(remote_path)
             with open(ff, "rb") as file_to_upload:
-                remote_file.set_contents_from_file(file_to_upload, headers={"Content-Type": "image/jpg"})
+                remote_file.set_contents_from_file(
+                    file_to_upload, headers={"Content-Type": "image/jpg"}
+                )
             remote_file.set_acl("public-read")
         # Create a thumbnail to upload to the server
         img_obj = Image.open(fpath)
@@ -193,11 +195,12 @@ def import_photos(clt, folder=None):
     update_state()
 
 
-def add_or_update_db(photo_name, file_type, file_size, created, height, width,
-        orientation, keywords, album):
+def add_or_update_db(
+    photo_name, file_type, file_size, created, height, width, orientation, keywords, album
+):
     crs = utils.get_cursor()
     sql = "select * from image where name = %s;"
-    crs.execute(sql, (photo_name, ))
+    crs.execute(sql, (photo_name,))
     recs = crs.fetchall()
     kw_str = " ".join(keywords)
     image_id = None
@@ -206,10 +209,15 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
         rec = recs[0]
         image_id = rec["pkid"]
         # Record exists; see if it differs
-        if ((keywords == rec["keywords"]) and (width == rec["wd"]) and
-                (ht == rec["height"]) and (file_type == rec["imgtype"]) and
-                (orientation == rec["orientation"]) and
-                (created == rec["created"]) and (file_size == rec["size"])):
+        if (
+            (keywords == rec["keywords"])
+            and (width == rec["wd"])
+            and (ht == rec["height"])
+            and (file_type == rec["imgtype"])
+            and (orientation == rec["orientation"])
+            and (created == rec["created"])
+            and (file_size == rec["size"])
+        ):
             # Everything matches; nothing to do.
             loginfo("DB; no change to", photo_name)
             pass
@@ -218,8 +226,9 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
                     update image set keywords = %s, width = %s, height = %s,
                       imgtype = %s, orientation = %s, size = %s, created = %s
                     where pkid = %s;"""
-            crs.execute(sql, (kw_str, width, height, file_type, orientation,
-                    file_size, created, image_id))
+            crs.execute(
+                sql, (kw_str, width, height, file_type, orientation, file_size, created, image_id)
+            )
             loginfo("DB; updated", photo_name)
     else:
         # New image
@@ -228,8 +237,20 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
                 insert into image (pkid, keywords, name, width, height,
                     orientation, imgtype, size, created)
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s);"""
-        crs.execute(sql, (image_id, kw_str, photo_name, width, height,
-                orientation, file_type, file_size, created))
+        crs.execute(
+            sql,
+            (
+                image_id,
+                kw_str,
+                photo_name,
+                width,
+                height,
+                orientation,
+                file_type,
+                file_size,
+                created,
+            ),
+        )
         loginfo("DB; created record for", photo_name)
     if album:
         if isinstance(album, str):
@@ -237,7 +258,7 @@ def add_or_update_db(photo_name, file_type, file_size, created, height, width,
         album_id = seen_albums.get(album)
         if not album_id:
             sql = "select pkid from album where name = %s;"
-            crs.execute(sql, (album, ))
+            crs.execute(sql, (album,))
             rec = crs.fetchone()
             if rec:
                 album_id = rec["pkid"]
@@ -270,7 +291,7 @@ def processing():
 
 
 if __name__ == "__main__":
-    with open(LOCKFILE) as lockfile:
+    with open(LOCKFILE, "ab") as lockfile:
         try:
             fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except IOError:
