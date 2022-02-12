@@ -2,6 +2,7 @@ import fcntl
 from functools import partial
 import hashlib
 import logging
+import mimetypes
 import os
 import sys
 import warnings
@@ -53,7 +54,7 @@ def _setup_logging():
 def logit(level, *msgs):
     if not LOG:
         _setup_logging()
-    text = " ".join(["%s" % msg for msg in msgs])
+    text = " ".join([f"{msg}" for msg in msgs])
     log_method = getattr(LOG, level)
     log_method(text)
 
@@ -64,11 +65,11 @@ loginfo = partial(logit, "info")
 
 def directory_hash(dirname=""):
     dirname = PHOTODIR if not dirname else dirname
-    cmd = "ls -lhR %s" % dirname
+    cmd = f"ls -lhR {dirname}"
     out, err = utils.runproc(cmd)
     m = hashlib.sha256(out)
     ret = m.hexdigest()
-    logdebug("Directory hash for %s:" % dirname, ret)
+    logdebug(f"Directory hash for {dirname}:", ret)
     return ret
 
 
@@ -76,7 +77,7 @@ def changed(subdir=None):
     if TESTING:
         return True
     match = "ALL" if subdir is None else os.path.basename(subdir)
-    logdebug("Checking changed status of %s" % match)
+    logdebug(f"Checking changed status of {match}")
     previous = None
     if os.path.exists(HASHFILE):
         with open(HASHFILE, "rb") as ff:
@@ -104,7 +105,7 @@ def changed(subdir=None):
 def update_state():
     with open(HASHFILE, "w") as ff:
         dirhash = directory_hash(PHOTODIR)
-        ff.write("ALL:%s\n" % dirhash)
+        ff.write(f"ALL:{dirhash}\n")
         loginfo("State file updated")
         for fname in os.listdir(PHOTODIR):
             pth = os.path.join(PHOTODIR, fname)
@@ -113,7 +114,7 @@ def update_state():
             dirhash = directory_hash(os.path.join(PHOTODIR, fname))
             #            if isinstance(fname, str):
             #                fname = fname.encode(DEFAULT_ENCONDING)
-            ff.write("%s:%s\n" % (fname, dirhash))
+            ff.write(f"{fname}:{dirhash}\n")
 
 
 def import_photos(clt, folder=None):
@@ -128,7 +129,7 @@ def import_photos(clt, folder=None):
         fpath = os.path.join(folder, photo_name)
         if os.path.isdir(fpath):
             if changed(fpath):
-                logdebug("Importing photos; directory '%s' has changed" % fpath)
+                logdebug(f"Importing photos; directory '{fpath}' has changed")
                 import_photos(clt, fpath)
             continue
         loginfo("Importing", photo_name)
@@ -174,9 +175,10 @@ def import_photos(clt, folder=None):
             img_obj.save(ff, format=file_type)
             remote_path = os.path.join(CLOUD_CONTAINER, photo_name)
             remote_file = clt.new_key(remote_path)
+            content_type = mimetypes.guess_type(file_type)[0] or "image/jpg"
             with open(ff, "rb") as file_to_upload:
                 remote_file.set_contents_from_file(
-                    file_to_upload, headers={"Content-Type": "image/jpg"}
+                    file_to_upload, headers={"Content-Type": content_type}
                 )
             remote_file.set_acl("public-read")
         # Create a thumbnail to upload to the server
@@ -222,10 +224,8 @@ def add_or_update_db(
             loginfo("DB; no change to", photo_name)
             pass
         else:
-            sql = """
-                    update image set keywords = %s, width = %s, height = %s,
-                      imgtype = %s, orientation = %s, size = %s, created = %s
-                    where pkid = %s;"""
+            sql = """update image set keywords = %s, width = %s, height = %s, imgtype = %s, orientation = %s,
+            size = %s, created = %s where pkid = %s;"""
             crs.execute(
                 sql, (kw_str, width, height, file_type, orientation, file_size, created, image_id)
             )
@@ -233,9 +233,7 @@ def add_or_update_db(
     else:
         # New image
         image_id = utils.gen_uuid()
-        sql = """
-                insert into image (pkid, keywords, name, width, height,
-                    orientation, imgtype, size, created)
+        sql = """insert into image (pkid, keywords, name, width, height, orientation, imgtype, size, created)
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s);"""
         crs.execute(
             sql,
@@ -270,8 +268,7 @@ def add_or_update_db(
                 loginfo("DB; created album", album)
             seen_albums[album] = album_id
         # Add the photo to the album`
-        sql = """insert ignore into album_image set album_id = %s,
-                image_id = %s;"""
+        sql = """insert ignore into album_image set album_id = %s, image_id = %s;"""
         with warnings.catch_warnings():
             # Change filter action to 'error' to raise warnings as if they
             # were exceptions, to record them in the log file

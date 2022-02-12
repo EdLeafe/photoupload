@@ -19,9 +19,26 @@ exclude = '''
 )
 '''
 
+[tool.poetry]
+name = "photoupload"
+version = "1.0.1"
+description = ""
+authors = ["EdLeafe <ed@leafe.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+Pillow = "^9.0.1"
+boto = "^2.49.0"
+PyMySQL = "^1.0.2"
+click = "^8.0.3"
+pyexif = {path = "../pyexif"}
+requests = "^2.27.1"
+
+[tool.poetry.dev-dependencies]
+black = "^22.1.0"
+ipython = "^8.0.1"
+pytest-pudb = "^0.7.0"
+
 [build-system]
-requires = [
-    "setuptools >= 35.0.2",
-    "setuptools_scm >= 2.0.0, <3"
-]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
