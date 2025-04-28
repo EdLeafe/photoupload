@@ -102,7 +102,7 @@ def _user_creds():
     return user_creds
 
 
-def create_client():
+def create_S3_client():
     user_creds = _user_creds()
     conn = boto.connect_s3(
         aws_access_key_id=user_creds["spacekey"],
@@ -111,32 +111,3 @@ def create_client():
     )
     bucket = conn.get_bucket(user_creds["bucket"])
     return bucket
-
-
-class SelfDeletingTempfile(object):
-    """
-    Convenience class for dealing with temporary files.
-
-    The temp file is created in a secure fashion, and is automatically deleted
-    when the context manager exits.
-
-    Usage:
-
-    \code
-    with SelfDeletingTempfile() as tmp:
-        tmp.write( ... )
-        some_func(tmp)
-    # More code
-    # At this point, the tempfile has been erased.
-    \endcode
-    """
-
-    name = None
-
-    def __enter__(self):
-        fd, self.name = tempfile.mkstemp()
-        os.close(fd)
-        return self.name
-
-    def __exit__(self, type, value, traceback):
-        os.unlink(self.name)

@@ -1,6 +1,8 @@
 import os
 
 import boto
+import common
+
 
 GALLERY_FOLDER = "/Users/ed/Desktop/Website Gallery/"
 CLOUD_CONTAINER = "galleries"
@@ -20,19 +22,8 @@ def _user_creds():
     return user_creds
 
 
-def create_client():
-    user_creds = _user_creds()
-    conn = boto.connect_s3(
-        aws_access_key_id=user_creds["spacekey"],
-        aws_secret_access_key=user_creds["secret"],
-        host="nyc3.digitaloceanspaces.com",
-    )
-    bucket = conn.get_bucket(user_creds["bucket"])
-    return bucket
-
-
 def main():
-    clt = create_client()
+    clt = common.create_S3_client()
     for root, dirs, files in os.walk(GALLERY_FOLDER, topdown=False):
         for name in files:
             if name.startswith("."):

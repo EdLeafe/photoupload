@@ -5,6 +5,7 @@ import logging
 import mimetypes
 import os
 import sys
+import tempfile
 import warnings
 
 from PIL import Image
@@ -12,12 +13,14 @@ import pyexif
 import pymysql
 import requests
 
+import common
 import utils
 
 
 LOCKFILE = ".upload.lock"
 PHOTODIR = "/Users/ed/Desktop/photoframe"
 CLOUD_CONTAINER = "photoviewer"
+DATABASE = "photoframe"
 HASHFILE = "state.hash"
 LOGFILE = "log/upload.log"
 TESTING = False
@@ -66,8 +69,8 @@ loginfo = partial(logit, "info")
 def directory_hash(dirname=""):
     dirname = PHOTODIR if not dirname else dirname
     cmd = f"ls -lhR {dirname}"
-    out, err = utils.runproc(cmd)
-    m = hashlib.sha256(out)
+    out, err = common.runproc(cmd)
+    m = hashlib.sha256(out.encode())
     ret = m.hexdigest()
     logdebug(f"Directory hash for {dirname}:", ret)
     return ret
@@ -170,25 +173,24 @@ def import_photos(clt, folder=None):
         if upscale:
             loginfo("Upscaling {} to {}".format(photo_name, newsize))
             img_obj.resize(newsize)
-        with utils.SelfDeletingTempfile() as ff:
+        with tempfile.TemporaryFile() as ff:
             loginfo("Uploading:", photo_name)
             img_obj.save(ff, format=file_type)
             remote_path = os.path.join(CLOUD_CONTAINER, photo_name)
             remote_file = clt.new_key(remote_path)
             content_type = mimetypes.guess_type(file_type)[0] or "image/jpg"
-            with open(ff, "rb") as file_to_upload:
-                remote_file.set_contents_from_file(
-                    file_to_upload, headers={"Content-Type": content_type}
-                )
+            ff.seek(0)
+            remote_file.set_contents_from_file(ff, headers={"Content-Type": content_type})
             remote_file.set_acl("public-read")
         # Create a thumbnail to upload to the server
         img_obj = Image.open(fpath)
         img_obj.thumbnail(THUMB_SIZE)
         img_obj.filename = photo_name
-        with utils.SelfDeletingTempfile() as ff:
+        with tempfile.TemporaryFile() as ff:
             img_obj.save(ff, format=file_type)
             # Copy to the server
-            files = {"thumb_file": open(ff, "rb")}
+            ff.seek(0)
+            files = {"thumb_file": ff.read()}
             data = {"filename": photo_name}
             loginfo("Posting thumbnail for", photo_name)
             resp = requests.post(THUMB_URL, data=data, files=files)
@@ -200,7 +202,7 @@ def import_photos(clt, folder=None):
 def add_or_update_db(
     photo_name, file_type, file_size, created, height, width, orientation, keywords, album
 ):
-    crs = utils.get_cursor()
+    crs = common.get_cursor(db=DATABASE)
     sql = "select * from image where name = %s;"
     crs.execute(sql, (photo_name,))
     recs = crs.fetchall()
@@ -232,7 +234,7 @@ def add_or_update_db(
             loginfo("DB; updated", photo_name)
     else:
         # New image
-        image_id = utils.gen_uuid()
+        image_id = common.gen_uuid()
         sql = """insert into image (pkid, keywords, name, width, height, orientation, imgtype, size, created)
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s);"""
         crs.execute(
@@ -262,7 +264,7 @@ def add_or_update_db(
                 album_id = rec["pkid"]
                 loginfo("DB; album", album, "exists")
             else:
-                album_id = utils.gen_uuid()
+                album_id = common.gen_uuid()
                 sql = "insert into album (pkid, name) values (%s, %s);"
                 crs.execute(sql, (album_id, album))
                 loginfo("DB; created album", album)
@@ -275,7 +277,7 @@ def add_or_update_db(
             warnings.simplefilter("ignore", pymysql.Warning)
             crs.execute(sql, (album_id, image_id))
             loginfo("DB; Added", photo_name, "to album", album)
-    utils.commit()
+    crs.commit()
 
 
 def processing():
@@ -296,5 +298,5 @@ if __name__ == "__main__":
             loginfo("LOCKED!")
             exit()
         if changed():
-            clt = utils.create_client()
+            clt = utils.create_S3_client()
             import_photos(clt)

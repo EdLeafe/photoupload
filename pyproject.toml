@@ -26,13 +26,14 @@ description = ""
 authors = ["EdLeafe <ed@leafe.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 Pillow = "^9.0.1"
 boto = "^2.49.0"
 PyMySQL = "^1.0.2"
 click = "^8.0.3"
 pyexif = {path = "../pyexif"}
 requests = "^2.27.1"
+common = {path = "../common", develop = true}
 
 [tool.poetry.dev-dependencies]
 black = "^22.1.0"
